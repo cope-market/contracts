@@ -48,6 +48,22 @@ contract LiquidityVault is ILiquidityVault, ERC4626, Ownable {
         emit ExitFeeSet(bps);
     }
 
+    /// @dev Shares carry 12 more decimals than USDC, making them 18-decimal like every other
+    ///      quantity in this protocol.
+    ///
+    ///      Two problems, one fix. Without the offset, shares are 6-decimal like the asset and have
+    ///      no headroom: a vault whose share price has drifted mints ZERO shares for a small
+    ///      deposit and silently absorbs the money. Measured on the live testnet deployment before
+    ///      this change, anything under 0.0044 USDC was a total loss and 0.01 USDC lost 12% to
+    ///      rounding.
+    ///
+    ///      The same offset raises OpenZeppelin's virtual share count to 1e12, which is what makes
+    ///      the classic inflation attack -- seed one wei, donate a pile, wait for a depositor --
+    ///      uneconomic rather than merely awkward.
+    function _decimalsOffset() internal pure override returns (uint8) {
+        return 12;
+    }
+
     /// @notice USDC held, less what the synthetic vault currently owes open positions.
     ///
     /// @dev Netting the liability is what stops an LP depositing just before traders lose and

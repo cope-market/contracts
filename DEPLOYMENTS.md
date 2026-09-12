@@ -6,9 +6,9 @@ Deployed 2026-09-12. Explorer: https://testnet.arcscan.app
 
 | Contract | Address | Verified |
 |---|---|---|
-| `SyntheticVault` | [`0xBC9697fdcD58bED8A87E90f0cD6ed0Fc1b104524`](https://testnet.arcscan.app/address/0xBC9697fdcD58bED8A87E90f0cD6ed0Fc1b104524) | ✅ |
-| `LiquidityVault` | [`0xD28a08692D291e38c970DdAE776D0deFD12538E2`](https://testnet.arcscan.app/address/0xD28a08692D291e38c970DdAE776D0deFD12538E2) | ✅ |
-| `PushOracle` | [`0x48503a79a8d35E15dF274BDf9fD9272E69DefD87`](https://testnet.arcscan.app/address/0x48503a79a8d35E15dF274BDf9fD9272E69DefD87) | ✅ |
+| `SyntheticVault` | [`0x2c720283A8Bbb5CC5b13C0C4Bcf2300826286c47`](https://testnet.arcscan.app/address/0x2c720283A8Bbb5CC5b13C0C4Bcf2300826286c47) | ✅ |
+| `LiquidityVault` | [`0x0ffABC4e80125C5742D5ed04Cc1fD1b634Bc3C5d`](https://testnet.arcscan.app/address/0x0ffABC4e80125C5742D5ed04Cc1fD1b634Bc3C5d) | ✅ |
+| `PushOracle` | [`0x0f2d191fEC3bB2DEEd8cE3E326193fd9b5203277`](https://testnet.arcscan.app/address/0x0f2d191fEC3bB2DEEd8cE3E326193fd9b5203277) | ✅ |
 | USDC (collateral and gas) | `0x3600000000000000000000000000000000000000` | — |
 
 Owner and pusher: `0xeeb3e0999D01f0d1Ed465513E414725a357F6ae4`. A throwaway testnet key, never reused
@@ -33,7 +33,7 @@ pusher must be running or the vault has no prices and nothing can trade:
 
 ```bash
 export PYTH_API_KEY=... RPC_URL=https://rpc.testnet.arc.io \
-       ORACLE=0x48503a79a8d35E15dF274BDf9fD9272E69DefD87 PRIVATE_KEY=0x...
+       ORACLE=0x0f2d191fEC3bB2DEEd8cE3E326193fd9b5203277 PRIVATE_KEY=0x...
 ./script/price-pusher.sh --interval 60
 ```
 
@@ -51,11 +51,23 @@ USDC writes cannot be fork-tested on Arc, so this is the real evidence.
 | `open` on EUR/USD | reverts — FX market closed, correctly untradeable |
 | LP `redeem` | full balance returned less the 0.10% exit fee |
 
-### One live confirmation of SECURITY.md A-5
+### LP share precision
 
-The first LP deposit into the new vault minted **4,539 shares for 20 USDC**, because an earlier trade
-had already pushed 4,405 units of fees into the vault while total supply was zero. Assets present
-before any shares exist inflate the share price — harmless here since the same account held both
-sides, but it is exactly the ERC-4626 first-depositor situation A-5 describes.
+`LiquidityVault` sets `_decimalsOffset() = 12`, so shares are 18-decimal against a 6-decimal asset.
 
-**Seed the pool and burn the first shares before it is public.**
+This was not cosmetic. A previous deployment ran with the default offset of zero and took fees while
+total supply was still zero, which left the share price distorted at roughly 4,407:1. Measured on
+that live deployment:
+
+| Deposit | Shares minted | Redeemable |
+|---|---|---|
+| 0.004 USDC | **0** | **0 — total loss** |
+| 0.01 USDC | 2 | 0.0088 — 12% lost to rounding |
+| 0.1 USDC | 22 | 0.0969 — 3.1% lost |
+
+With the offset, the same deposits return everything but the 0.10% exit fee. The offset also raises
+OpenZeppelin's virtual share count to 1e12, which is what makes the classic inflation attack
+uneconomic rather than merely awkward.
+
+**The pool is seeded as the first action after deployment**, before anything can donate into an
+empty vault. Do the same on mainnet, and hold or burn those first shares.

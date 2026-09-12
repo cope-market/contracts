@@ -11,9 +11,9 @@ come from Pyth. Positions are ERC-721; LP shares are ERC-4626.
 
 | Contract | Address |
 |---|---|
-| `SyntheticVault` | [`0xBC9697fdcD58bED8A87E90f0cD6ed0Fc1b104524`](https://testnet.arcscan.app/address/0xBC9697fdcD58bED8A87E90f0cD6ed0Fc1b104524) |
-| `LiquidityVault` | [`0xD28a08692D291e38c970DdAE776D0deFD12538E2`](https://testnet.arcscan.app/address/0xD28a08692D291e38c970DdAE776D0deFD12538E2) |
-| `PushOracle` | [`0x48503a79a8d35E15dF274BDf9fD9272E69DefD87`](https://testnet.arcscan.app/address/0x48503a79a8d35E15dF274BDf9fD9272E69DefD87) |
+| `SyntheticVault` | [`0x2c720283A8Bbb5CC5b13C0C4Bcf2300826286c47`](https://testnet.arcscan.app/address/0x2c720283A8Bbb5CC5b13C0C4Bcf2300826286c47) |
+| `LiquidityVault` | [`0x0ffABC4e80125C5742D5ed04Cc1fD1b634Bc3C5d`](https://testnet.arcscan.app/address/0x0ffABC4e80125C5742D5ed04Cc1fD1b634Bc3C5d) |
+| `PushOracle` | [`0x0f2d191fEC3bB2DEEd8cE3E326193fd9b5203277`](https://testnet.arcscan.app/address/0x0f2d191fEC3bB2DEEd8cE3E326193fd9b5203277) |
 
 All three verified on [arcscan](https://testnet.arcscan.app). Chain 5042002; USDC at
 `0x3600000000000000000000000000000000000000` is both collateral and gas. Full details, config and
