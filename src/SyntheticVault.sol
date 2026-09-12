@@ -64,6 +64,14 @@ contract SyntheticVault is ERC721, Ownable {
     mapping(bytes32 feedId => bool) private _feedKnown;
 
     event AssetConfigured(bytes32 indexed feedId, AssetConfig config);
+    event PositionClosed(
+        uint256 indexed tokenId,
+        address indexed closedBy,
+        bytes32 indexed feedId,
+        uint256 exitPrice,
+        int256 pnlWad,
+        uint256 payout
+    );
     event PositionOpened(
         uint256 indexed tokenId,
         address indexed owner,
@@ -80,6 +88,7 @@ contract SyntheticVault is ERC721, Ownable {
     error ConfidenceTooWide(bytes32 feedId, uint256 confBps, uint256 maxConfBps);
     error PositionTooLarge(bytes32 feedId, uint256 notionalUsd, uint256 maxPositionUsd);
     error ZeroCollateral();
+    error NotPositionOwner(uint256 tokenId, address caller);
     error OpenInterestCapExceeded(bytes32 feedId, bool isLong, uint256 oiUsd, uint256 maxOiUsd);
 
     constructor(IERC20 usdc_, IPriceOracle oracle_, ILiquidityVault liquidityVault_, address initialOwner)
@@ -130,6 +139,74 @@ contract SyntheticVault is ERC721, Ownable {
         } else {
             st.shortUnits = total;
             st.shortAvgEntry = newAvg;
+        }
+    }
+
+    /// @notice Closes a position and settles it against the LP pool.
+    /// @dev State is cleared and the token burned before any USDC moves, so a re-entrant call
+    ///      finds nothing left to close.
+    function close(uint256 tokenId, bytes[] calldata updateData) external payable {
+        address owner = _requireOwned(tokenId);
+        if (!_isAuthorized(owner, msg.sender, tokenId)) revert NotPositionOwner(tokenId, msg.sender);
+
+        Position memory pos = _positions[tokenId];
+        AssetConfig memory cfg = assetConfig[pos.feedId];
+
+        oracle.updatePrices{value: msg.value}(updateData);
+        IPriceOracle.Price memory p = oracle.getPrice(pos.feedId, cfg.maxAgeSec);
+
+        // Confidence moves against the trader on the way out too: a long exits below mid.
+        uint256 exitPrice = pos.isLong ? p.price - p.conf : p.price + p.conf;
+        (uint256 payout, int256 pnlWad) = _quoteClose(pos, cfg.closeFeeBps, exitPrice);
+
+        _removeFromSide(pos.feedId, pos.isLong, pos.units);
+        delete _positions[tokenId];
+        _burn(tokenId);
+
+        _settle(owner, pos.collateral, payout);
+
+        emit PositionClosed(tokenId, msg.sender, pos.feedId, exitPrice, pnlWad, payout);
+    }
+
+    /// @notice Payout in USDC and signed P&L in wad, for a position exiting at `exitPrice`.
+    function _quoteClose(Position memory pos, uint32 closeFeeBps, uint256 exitPrice)
+        internal
+        pure
+        returns (uint256 payout, int256 pnlWad)
+    {
+        uint256 exitNotional = pos.units * exitPrice / Wad.ONE;
+        uint256 closeFee = exitNotional * closeFeeBps / BPS;
+
+        int256 entry = int256(pos.entryPrice);
+        int256 exit_ = int256(exitPrice);
+        int256 delta = pos.isLong ? exit_ - entry : entry - exit_;
+        pnlWad = int256(pos.units) * delta / int256(Wad.ONE);
+
+        int256 gross = int256(Wad.toWad(pos.collateral)) + pnlWad - int256(closeFee);
+        // A trader can be wiped out but never owes more than their collateral. The shortfall is
+        // the LPs' risk, which is what liquidation exists to bound.
+        payout = gross > 0 ? Wad.fromWad(uint256(gross)) : 0;
+    }
+
+    /// @dev Tops up from the LP pool when the trader won, and returns the remainder to it when they
+    ///      lost. Close fees arrive at the pool the same way, inside the remainder.
+    function _settle(address owner, uint128 collateral, uint256 payout) internal {
+        if (payout > collateral) {
+            liquidityVault.payout(address(this), payout - collateral);
+        } else if (payout < collateral) {
+            usdc.safeTransfer(address(liquidityVault), collateral - payout);
+        }
+        if (payout != 0) usdc.safeTransfer(owner, payout);
+    }
+
+    function _removeFromSide(bytes32 feedId, bool isLong, uint256 units) internal {
+        AssetState storage st = assetState[feedId];
+        if (isLong) {
+            st.longUnits -= units;
+            if (st.longUnits == 0) st.longAvgEntry = 0;
+        } else {
+            st.shortUnits -= units;
+            if (st.shortUnits == 0) st.shortAvgEntry = 0;
         }
     }
 
