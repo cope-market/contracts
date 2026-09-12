@@ -138,3 +138,106 @@ the same balance. They are not two assets. The keeper's ERC-20 balance moved by 
 the test where payout plus reward was `1995262`, and the `3920` difference is the gas for the
 liquidation and the two parameter changes. Anything reconciling USDC balances on Arc has to account
 for gas, which is not true on a chain where gas is a different token.
+
+---
+
+# Price pusher
+
+Feeds prices to `PushOracle`. Without it the vault has no prices and nothing can open or close.
+
+This exists only because Pyth's pull path does not work on Arc — the chain's Wormhole receiver holds
+Wormhole's guardian set rather than Pythnet's, so a valid update blob is rejected. When that is
+fixed, this service is deleted rather than improved.
+
+```bash
+npm run pusher -- --once              # one cycle
+npm run pusher -- --interval 60       # runs until stopped
+npm run pusher -- --interval 60 --stamp-now
+```
+
+## What it does that the shell script did not
+
+**Feeds come from the chain.** `enabledFeeds()` intersected with what the Hermes key can fetch. A
+feed the vault has enabled that the key cannot fetch is an asset users can select and never trade,
+and the pusher now says so on every cycle instead of nobody noticing.
+
+**A push is judged by the oracle, not by the receipt.** After pushing, each feed's age is compared
+against that asset's own `maxAgeSec`. A price can be written and still too old, and those look
+identical from a mined transaction. This is why a cycle can report `1 pushed` and
+`SOME FEEDS UNUSABLE` in the same line — which is the true state most weekends.
+
+**The interval is enforced.** The script said "keep well under the vault's `maxAgeSec`". This reads
+the tightest `maxAgeSec` on chain and refuses anything slower than a third of it, so one missed
+cycle does not take every price stale.
+
+**Sustained failure is louder than a blip.** One failed cycle is a warning; three in a row is an
+error naming the consequence. Repeating one line at one volume forever is the same as no alerting.
+
+**One instance.** Two pushers share a key and race nonces, producing intermittent "nonce too low"
+errors that look like an RPC fault. The second one says so and exits. The lock records a pid and is
+taken over if that process is gone, so a crash does not keep the service down.
+
+## Health
+
+Each cycle writes `/tmp/cope-pusher-status.json` (override with `PUSHER_HEARTBEAT`):
+
+```json
+{
+  "at": "2026-09-12T21:09:58.598Z",
+  "ok": true,
+  "healthy": false,
+  "pushed": 1,
+  "feeds": [{"feedId": "0xe62df6…", "ageSec": 5, "maxAgeSec": 600, "fresh": true}]
+}
+```
+
+`ok` is whether the cycle ran. `healthy` is whether every feed is usable by the vault. They differ
+whenever a market is closed, and the difference is the point: the pusher is working and the vault
+still cannot price three of its four assets.
+
+The dangerous failure is silence — the process dies, prices go stale, and the first symptom is a
+trade reverting mid-demo. Check the file's timestamp, not the logs.
+
+## `--stamp-now`
+
+Publishes under the chain's clock rather than the real market time, which keeps a demo tradeable
+when FX and equity markets are closed. It asserts a freshness the data does not have. Opt-in, warned
+about on every start, and never appropriate for anything but a demo.
+
+## Running it on the VPS
+
+```ini
+# /etc/systemd/system/cope-pusher.service
+[Unit]
+Description=Cope Market price pusher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/cope-market/contracts/services
+ExecStart=/usr/bin/npx tsx src/pusher/index.ts --interval 60
+Restart=always
+RestartSec=15
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl enable --now cope-pusher cope-keeper
+journalctl -u cope-pusher -f
+```
+
+`ExecStart` runs the entrypoint directly rather than through `npm run`. npm adds a wrapper process
+between systemd and the service, and signals then have to travel one hop further than they should.
+
+The two services log under `[pusher]` and `[keeper]` so one journal stays readable.
+
+## The shell script is still there
+
+`script/price-pusher.sh` still works and still does the arithmetic correctly. It stays until this
+service has run a demo. Deleting the thing that works before its replacement has proved itself is
+how a demo ends up with neither.

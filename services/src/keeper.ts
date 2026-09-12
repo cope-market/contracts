@@ -13,11 +13,17 @@ export interface Logger {
   error(message: string): void;
 }
 
-export const consoleLogger: Logger = {
-  info: (message) => console.log(`[keeper] ${message}`),
-  warn: (message) => console.warn(`[keeper] WARN  ${message}`),
-  error: (message) => console.error(`[keeper] ERROR ${message}`),
-};
+/// Named, because both services log to the same journal. A pusher warning printed under [keeper]
+/// sends whoever is reading it to the wrong process.
+export function createLogger(name: string): Logger {
+  return {
+    info: (message) => console.log(`[${name}] ${message}`),
+    warn: (message) => console.warn(`[${name}] WARN  ${message}`),
+    error: (message) => console.error(`[${name}] ERROR ${message}`),
+  };
+}
+
+export const consoleLogger: Logger = createLogger("keeper");
 
 /// Token ids known to be gone, so a burned position is not re-checked on every sweep forever.
 ///
