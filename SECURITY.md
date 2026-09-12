@@ -47,6 +47,28 @@ could back. Sub-micro-USDC in size, but the wrong direction.
 
 **Fix:** debts round up, credits round down. Every rounding decision now favours the protocol.
 
+### M-1 — `setAssetConfig` validated nothing
+
+Found by probing for misconfiguration rather than attack. The owner could set any fee, any
+confidence bound, and a zero `maxAgeSec`. Three concrete ways that goes wrong:
+
+- `openFeeBps = 10000` takes the entire deposit. A trader paid 1,000 USDC and received a position
+  with **zero units and zero collateral** — funds to the LPs, worthless NFT to them.
+- `maxAgeSec = 0` makes every price stale, which blocks opens **and traps open positions**, since
+  closing reads the price too.
+- `maxConfBps >= 10000` lets confidence exceed price, underflowing the short entry calculation.
+
+None of these require malice. `1000` typed where `10` was meant is a 10% fee.
+
+**Fix:** fees capped at 5% (`MAX_ASSET_FEE_BPS`), confidence bound capped at 10%
+(`MAX_CONF_BOUND_BPS`), `maxAgeSec` must be non-zero.
+
+### M-2 — A position with zero units could be minted
+
+Reachable via M-1, but guarded independently: `open` now reverts `ZeroUnits` if the computed
+exposure rounds to zero. A position with no exposure is redeemable for nothing, so the trader would
+have paid and received nothing.
+
 ---
 
 ## Accepted risks
@@ -143,7 +165,12 @@ token would break these assumptions.**
 
 ## Test evidence
 
-130 tests. The two load-bearing invariants were mutation-tested rather than trusted for being green:
+149 tests. Coverage: **100% of lines**, 98.21% of branches, 100% of functions across `src/`.
+
+The single uncovered branch is the author-fee clamp in `close`, which is unreachable under the
+current caps — with the author fee at most 50% of profit and the close fee at most 5% of exit
+notional, the fee cannot exceed the payout on any price path. It is retained as defence in depth
+against a future cap change. The two load-bearing invariants were mutation-tested rather than trusted for being green:
 
 | Mutation | Result |
 |---|---|

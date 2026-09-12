@@ -58,6 +58,14 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
     uint16 public constant MAX_AUTHOR_FEE_BPS = 5000;
     uint16 public constant MAX_LIQUIDATION_REWARD_BPS = 1000;
 
+    /// @dev Trading fees are bounded so a mistyped parameter cannot confiscate a deposit. 1000
+    ///      entered where 10 was meant is a 10% fee; 10000 takes the whole thing.
+    uint32 public constant MAX_ASSET_FEE_BPS = 500;
+
+    /// @dev Must stay below 100%: the short entry price is `price - conf`, which underflows once
+    ///      confidence can exceed the price itself.
+    uint32 public constant MAX_CONF_BOUND_BPS = 1000;
+
     IERC20 public immutable usdc;
     IPriceOracle public immutable oracle;
     ILiquidityVault public immutable liquidityVault;
@@ -117,6 +125,10 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
     error ConfidenceTooWide(bytes32 feedId, uint256 confBps, uint256 maxConfBps);
     error PositionTooLarge(bytes32 feedId, uint256 notionalUsd, uint256 maxPositionUsd);
     error ZeroCollateral();
+    error ZeroUnits();
+    error FeeTooHigh(uint32 bps, uint32 max);
+    error InvalidMaxAge();
+    error ConfBoundTooHigh(uint32 bps, uint32 max);
     error AuthorFeeTooHigh(uint16 requested, uint16 max);
     error PositionHealthy(uint256 tokenId, uint256 lossWad, uint256 thresholdWad);
     error InvalidLiquidationParams(uint16 thresholdBps, uint16 rewardBps);
@@ -180,7 +192,17 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
         emit AuthorFeeSet(bps);
     }
 
+    /// @notice Configures an asset. Validated, because this is the owner's most dangerous surface:
+    ///         every field here can freeze funds or confiscate them if set wrong by accident.
     function setAssetConfig(bytes32 feedId, AssetConfig calldata config) external onlyOwner {
+        if (config.openFeeBps > MAX_ASSET_FEE_BPS) revert FeeTooHigh(config.openFeeBps, MAX_ASSET_FEE_BPS);
+        if (config.closeFeeBps > MAX_ASSET_FEE_BPS) revert FeeTooHigh(config.closeFeeBps, MAX_ASSET_FEE_BPS);
+        if (config.maxConfBps > MAX_CONF_BOUND_BPS) {
+            revert ConfBoundTooHigh(config.maxConfBps, MAX_CONF_BOUND_BPS);
+        }
+        // Zero would make every price stale, blocking opens AND trapping open positions.
+        if (config.maxAgeSec == 0) revert InvalidMaxAge();
+
         assetConfig[feedId] = config;
         if (!_feedKnown[feedId]) {
             _feedKnown[feedId] = true;
@@ -278,6 +300,9 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
         uint256 authorFee;
         if (pos.copyAuthor != address(0) && pnlWad > 0) {
             authorFee = Wad.fromWad(uint256(pnlWad) * pos.authorFeeBps / BPS);
+            // Defence in depth. Unreachable under the current caps: with authorFeeBps <= 50% of
+            // profit and closeFeeBps <= 5% of exit notional, the fee cannot exceed the payout for
+            // any price path. Retained so a future cap change cannot make a settlement negative.
             if (authorFee > payout) authorFee = payout;
             payout -= authorFee;
         }
@@ -386,6 +411,9 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
             }
             units = notionalUsd * Wad.ONE / entryPrice;
         }
+        // A position with no exposure is not redeemable for anything, so the trader would have paid
+        // and received nothing. Refuse rather than mint a worthless token.
+        if (units == 0) revert ZeroUnits();
 
         _addToSide(feedId, isLong, units, entryPrice);
         {
