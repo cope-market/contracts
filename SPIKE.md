@@ -93,3 +93,40 @@ Verified twice per feed; deterministic, not rate limiting.
 4. **Open question for the team:** upgrade the Pyth plan to cover the equities we want, or ship
    FX + metals + crypto + whatever equities are entitled. Chainlink on Arc mainnet has no equity
    feeds either, so this cannot be solved by switching oracle.
+
+
+---
+
+# Spike: Arc's dual-representation USDC
+
+Verified 2026-09-12 against Arc testnet. Tests in `test/ArcChain.t.sol` (`FORK_TESTS=1`).
+
+| Question | Answer |
+|---|---|
+| Chain id | `5042002` |
+| ERC-20 `decimals()` at `0x3600…0000` | **6** |
+| Native balance decimals | **18** |
+| Relationship | `balanceOf(a) == a.balance / 1e12`, exactly `Wad.fromWad` |
+| Base fee | **20 gwei**, matching the documented floor |
+| Can USDC transfers be fork-tested? | **No.** See below. |
+
+## The two representations are consistent
+
+For a funded account, `eth_getBalance` returned `11705898898359212279` (18 dec) while ERC-20
+`balanceOf` returned `11705898` (6 dec). Same balance, the ERC-20 side truncated. This is what the
+contracts assume, and it is now asserted against the live chain rather than taken from docs.
+
+`totalSupply()` is the exception: it reports `3.1498e17`, which is neither a sensible 6-decimal nor
+18-decimal figure. Do not build anything on it. Nothing in this repo does.
+
+## USDC writes cannot be simulated in a fork
+
+`0x3600…0000` is a proxy, but its EIP-1967 implementation slot reads as zero, so Foundry cannot
+resolve the delegate target. State-changing calls run away on gas and revert; reads work fine. A
+static `transfer` call against the live node returns `true`, so the token is not broken — forking is.
+
+**Consequences:**
+
+1. Nothing that moves USDC on Arc can be fork-tested. Unit tests use `MockUSDC`.
+2. Integration testing must run against the live testnet with a real broadcast, not a fork.
+3. The first real proof the system works end to end is a broadcast deploy plus a smoke trade.
