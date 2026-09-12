@@ -83,19 +83,32 @@ contract VaultInvariantsTest is Test {
         for (uint256 f; f < feeds.length; ++f) {
             uint256 longUnits;
             uint256 shortUnits;
+            uint256 longNotional;
+            uint256 shortNotional;
             uint256 n = handler.openIdCount();
 
             for (uint256 i; i < n; ++i) {
                 try vault.positions(handler.openIds(i)) returns (SyntheticVault.Position memory p) {
                     if (p.feedId != feeds[f]) continue;
-                    if (p.isLong) longUnits += p.units;
-                    else shortUnits += p.units;
+                    uint256 notional = p.units * p.entryPrice / 1e18;
+                    if (p.isLong) {
+                        longUnits += p.units;
+                        longNotional += notional;
+                    } else {
+                        shortUnits += p.units;
+                        shortNotional += notional;
+                    }
                 } catch {}
             }
 
-            (uint256 aggLong,, uint256 aggShort,) = vault.assetState(feeds[f]);
+            (uint256 aggLong, uint256 aggLongNotional, uint256 aggShort, uint256 aggShortNotional) =
+                vault.assetState(feeds[f]);
             assertEq(aggLong, longUnits, "long units drifted");
             assertEq(aggShort, shortUnits, "short units drifted");
+            // Cost basis, not just quantity. The units-only version of this invariant passed while
+            // the aggregate average entry was silently wrong after a selective close.
+            assertEq(aggLongNotional, longNotional, "long cost basis drifted");
+            assertEq(aggShortNotional, shortNotional, "short cost basis drifted");
         }
     }
 

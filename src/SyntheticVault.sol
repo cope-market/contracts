@@ -43,11 +43,15 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
         uint128 maxPositionUsd; // per position, 1e18
     }
 
+    /// @dev Cost basis is stored as total notional, not as a running average price. An average
+    ///      cannot be un-mixed: closing one of several positions would leave a blend of entries
+    ///      that no surviving position actually has, and liability would then be measured against a
+    ///      price nobody entered at. Notional subtracts exactly.
     struct AssetState {
         uint256 longUnits;
-        uint256 longAvgEntry;
+        uint256 longNotional; // USD wad, sum of units * entryPrice
         uint256 shortUnits;
-        uint256 shortAvgEntry;
+        uint256 shortNotional;
     }
 
     uint256 internal constant BPS = 1e4;
@@ -152,7 +156,7 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
         if (reward > payout) reward = payout;
         payout -= reward;
 
-        _removeFromSide(pos.feedId, pos.isLong, pos.units);
+        _removeFromSide(pos.feedId, pos.isLong, pos.units, pos.entryPrice);
         delete _positions[tokenId];
         _burn(tokenId);
 
@@ -203,8 +207,9 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
 
         uint256 px = oracle.getPrice(feedId, type(uint256).max).price;
 
-        int256 longPnl = int256(st.longUnits) * (int256(px) - int256(st.longAvgEntry)) / int256(Wad.ONE);
-        int256 shortPnl = int256(st.shortUnits) * (int256(st.shortAvgEntry) - int256(px)) / int256(Wad.ONE);
+        // Mark to market against cost basis: what the open units are worth now, less what they cost.
+        int256 longPnl = int256(st.longUnits * px / Wad.ONE) - int256(st.longNotional);
+        int256 shortPnl = int256(st.shortNotional) - int256(st.shortUnits * px / Wad.ONE);
 
         return longPnl + shortPnl;
     }
@@ -226,26 +231,29 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
     ///         price, so a cap does not tighten or loosen as the market moves.
     function openInterest(bytes32 feedId, bool isLong) public view returns (uint256) {
         AssetState storage st = assetState[feedId];
-        return isLong ? st.longUnits * st.longAvgEntry / Wad.ONE : st.shortUnits * st.shortAvgEntry / Wad.ONE;
+        return isLong ? st.longNotional : st.shortNotional;
     }
 
-    /// @dev Notional-weighted average entry. Adding `units` at `entryPrice` contributes
-    ///      `units * entryPrice` of notional, so the new average is total notional over total units.
-    ///      Tracking the aggregate this way keeps liability O(assets) instead of O(positions).
+    /// @notice Notional-weighted average entry for one side, derived rather than stored.
+    function avgEntry(bytes32 feedId, bool isLong) external view returns (uint256) {
+        AssetState storage st = assetState[feedId];
+        (uint256 units, uint256 notional) =
+            isLong ? (st.longUnits, st.longNotional) : (st.shortUnits, st.shortNotional);
+        return units == 0 ? 0 : notional * Wad.ONE / units;
+    }
+
+    /// @dev Keeping units and notional as running sums is what makes liability O(assets) rather
+    ///      than O(positions), and what makes a partial close exact.
     function _addToSide(bytes32 feedId, bool isLong, uint256 units, uint256 entryPrice) internal {
         AssetState storage st = assetState[feedId];
-        (uint256 have, uint256 avg) =
-            isLong ? (st.longUnits, st.longAvgEntry) : (st.shortUnits, st.shortAvgEntry);
-
-        uint256 total = have + units;
-        uint256 newAvg = (have * avg + units * entryPrice) / total;
+        uint256 notional = units * entryPrice / Wad.ONE;
 
         if (isLong) {
-            st.longUnits = total;
-            st.longAvgEntry = newAvg;
+            st.longUnits += units;
+            st.longNotional += notional;
         } else {
-            st.shortUnits = total;
-            st.shortAvgEntry = newAvg;
+            st.shortUnits += units;
+            st.shortNotional += notional;
         }
     }
 
@@ -274,7 +282,7 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
             payout -= authorFee;
         }
 
-        _removeFromSide(pos.feedId, pos.isLong, pos.units);
+        _removeFromSide(pos.feedId, pos.isLong, pos.units, pos.entryPrice);
         delete _positions[tokenId];
         _burn(tokenId);
 
@@ -331,14 +339,18 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
         if (authorFee != 0) usdc.safeTransfer(author, authorFee);
     }
 
-    function _removeFromSide(bytes32 feedId, bool isLong, uint256 units) internal {
+    /// @dev Subtracts this position's own notional, computed the same way it was added, so the
+    ///      aggregate stays exactly the sum over surviving positions.
+    function _removeFromSide(bytes32 feedId, bool isLong, uint256 units, uint256 entryPrice) internal {
         AssetState storage st = assetState[feedId];
+        uint256 notional = units * entryPrice / Wad.ONE;
+
         if (isLong) {
             st.longUnits -= units;
-            if (st.longUnits == 0) st.longAvgEntry = 0;
+            st.longNotional -= notional;
         } else {
             st.shortUnits -= units;
-            if (st.shortUnits == 0) st.shortAvgEntry = 0;
+            st.shortNotional -= notional;
         }
     }
 

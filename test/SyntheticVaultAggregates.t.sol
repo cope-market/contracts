@@ -60,9 +60,9 @@ contract SyntheticVaultAggregatesTest is Test {
 
     function test_FirstOpenSetsUnitsAndAverageEntry() public {
         _open(true, 1_000e6);
-        (uint256 longUnits, uint256 longAvgEntry,,) = vault.assetState(EUR);
+        (uint256 longUnits,,,) = vault.assetState(EUR);
         assertEq(longUnits, 1_000e18, "1000 USD at a price of 1.0 is 1000 units");
-        assertEq(longAvgEntry, 1e18);
+        assertEq(vault.avgEntry(EUR, true), 1e18);
     }
 
     /// @dev 1000 USD at 1.0 gives 1000 units; 1000 USD at 2.0 gives 500 units. 2000 USD of notional
@@ -73,10 +73,10 @@ contract SyntheticVaultAggregatesTest is Test {
         _price(2e18);
         _open(true, 1_000e6);
 
-        (uint256 longUnits, uint256 longAvgEntry,,) = vault.assetState(EUR);
+        (uint256 longUnits,,,) = vault.assetState(EUR);
         assertEq(longUnits, 1_500e18);
-        assertEq(longAvgEntry, uint256(2_000e18) * 1e18 / 1_500e18);
-        assertEq(longAvgEntry, 1_333_333_333_333_333_333);
+        assertEq(vault.avgEntry(EUR, true), uint256(2_000e18) * 1e18 / 1_500e18);
+        assertEq(vault.avgEntry(EUR, true), 1_333_333_333_333_333_333);
     }
 
     function test_LongsAndShortsTrackedSeparately() public {
@@ -84,12 +84,11 @@ contract SyntheticVaultAggregatesTest is Test {
         _price(2e18);
         _open(false, 1_000e6);
 
-        (uint256 longUnits, uint256 longAvgEntry, uint256 shortUnits, uint256 shortAvgEntry) =
-            vault.assetState(EUR);
+        (uint256 longUnits,, uint256 shortUnits,) = vault.assetState(EUR);
         assertEq(longUnits, 1_000e18);
-        assertEq(longAvgEntry, 1e18);
+        assertEq(vault.avgEntry(EUR, true), 1e18);
         assertEq(shortUnits, 500e18);
-        assertEq(shortAvgEntry, 2e18);
+        assertEq(vault.avgEntry(EUR, false), 2e18);
     }
 
     function test_OpenInterestIsMeasuredAtEntryValue() public {
