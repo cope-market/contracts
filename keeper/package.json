@@ -1,0 +1,30 @@
+{
+  "name": "@cope-market/keeper",
+  "version": "0.1.0",
+  "description": "Liquidates underwater SyntheticVault positions.",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "keeper": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run format:check && npm run typecheck && npm test"
+  },
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "viem": "^2.56.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  },
+  "private": true
+}
