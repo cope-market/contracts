@@ -7,6 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IPriceOracle} from "./interfaces/IPriceOracle.sol";
 import {ILiquidityVault} from "./interfaces/ILiquidityVault.sol";
+import {ISyntheticVault} from "./interfaces/ISyntheticVault.sol";
 import {Wad} from "./libraries/Wad.sol";
 
 /// @notice Oracle-priced synthetic positions, collateralised in USDC, with an LP pool as
@@ -16,7 +17,7 @@ import {Wad} from "./libraries/Wad.sol";
 /// positions on the same feed opened at different prices are not interchangeable. Making them
 /// fungible would mean pooling holders at one shared average entry, which loses both shorts and
 /// per-holder P&L.
-contract SyntheticVault is ERC721, Ownable {
+contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
     using SafeERC20 for IERC20;
 
     struct Position {
@@ -113,6 +114,37 @@ contract SyntheticVault is ERC721, Ownable {
         Position memory p = _positions[tokenId];
         if (p.entryPrice == 0) revert UnknownPosition(tokenId);
         return p;
+    }
+
+    /// @notice Net USD the vault owes open positions on one feed, in wad. Negative means traders
+    ///         are underwater and the amount accrues to LPs instead.
+    ///
+    /// @dev Reads the price with no staleness bound on purpose. FX and equity feeds stop updating
+    ///      outside market hours, so a staleness revert here would brick the ERC-4626 vault's
+    ///      totalAssets every weekend. Trading is gated on freshness; valuation must not be.
+    function liability(bytes32 feedId) public view returns (int256) {
+        AssetState storage st = assetState[feedId];
+        if (st.longUnits == 0 && st.shortUnits == 0) return 0;
+
+        uint256 px = oracle.getPrice(feedId, type(uint256).max).price;
+
+        int256 longPnl = int256(st.longUnits) * (int256(px) - int256(st.longAvgEntry)) / int256(Wad.ONE);
+        int256 shortPnl = int256(st.shortUnits) * (int256(st.shortAvgEntry) - int256(px)) / int256(Wad.ONE);
+
+        return longPnl + shortPnl;
+    }
+
+    /// @notice Net USD owed across every configured feed, in wad.
+    /// @dev O(feeds), not O(positions). Bounded by how many assets the owner enables.
+    function totalLiability() external view returns (int256 total) {
+        uint256 len = _feeds.length;
+        for (uint256 i; i < len; ++i) {
+            total += liability(_feeds[i]);
+        }
+    }
+
+    function enabledFeeds() external view returns (bytes32[] memory) {
+        return _feeds;
     }
 
     /// @notice Open interest on one side, valued at average entry rather than at the current
