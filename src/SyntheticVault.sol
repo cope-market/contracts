@@ -41,6 +41,13 @@ contract SyntheticVault is ERC721, Ownable {
         uint128 maxPositionUsd; // per position, 1e18
     }
 
+    struct AssetState {
+        uint256 longUnits;
+        uint256 longAvgEntry;
+        uint256 shortUnits;
+        uint256 shortAvgEntry;
+    }
+
     uint256 internal constant BPS = 1e4;
 
     IERC20 public immutable usdc;
@@ -51,6 +58,7 @@ contract SyntheticVault is ERC721, Ownable {
 
     mapping(bytes32 feedId => AssetConfig) public assetConfig;
     mapping(uint256 tokenId => Position) private _positions;
+    mapping(bytes32 feedId => AssetState) public assetState;
 
     bytes32[] private _feeds;
     mapping(bytes32 feedId => bool) private _feedKnown;
@@ -72,6 +80,7 @@ contract SyntheticVault is ERC721, Ownable {
     error ConfidenceTooWide(bytes32 feedId, uint256 confBps, uint256 maxConfBps);
     error PositionTooLarge(bytes32 feedId, uint256 notionalUsd, uint256 maxPositionUsd);
     error ZeroCollateral();
+    error OpenInterestCapExceeded(bytes32 feedId, bool isLong, uint256 oiUsd, uint256 maxOiUsd);
 
     constructor(IERC20 usdc_, IPriceOracle oracle_, ILiquidityVault liquidityVault_, address initialOwner)
         ERC721("Cope Market Position", "COPE-POS")
@@ -95,6 +104,33 @@ contract SyntheticVault is ERC721, Ownable {
         Position memory p = _positions[tokenId];
         if (p.entryPrice == 0) revert UnknownPosition(tokenId);
         return p;
+    }
+
+    /// @notice Open interest on one side, valued at average entry rather than at the current
+    ///         price, so a cap does not tighten or loosen as the market moves.
+    function openInterest(bytes32 feedId, bool isLong) public view returns (uint256) {
+        AssetState storage st = assetState[feedId];
+        return isLong ? st.longUnits * st.longAvgEntry / Wad.ONE : st.shortUnits * st.shortAvgEntry / Wad.ONE;
+    }
+
+    /// @dev Notional-weighted average entry. Adding `units` at `entryPrice` contributes
+    ///      `units * entryPrice` of notional, so the new average is total notional over total units.
+    ///      Tracking the aggregate this way keeps liability O(assets) instead of O(positions).
+    function _addToSide(bytes32 feedId, bool isLong, uint256 units, uint256 entryPrice) internal {
+        AssetState storage st = assetState[feedId];
+        (uint256 have, uint256 avg) =
+            isLong ? (st.longUnits, st.longAvgEntry) : (st.shortUnits, st.shortAvgEntry);
+
+        uint256 total = have + units;
+        uint256 newAvg = (have * avg + units * entryPrice) / total;
+
+        if (isLong) {
+            st.longUnits = total;
+            st.longAvgEntry = newAvg;
+        } else {
+            st.shortUnits = total;
+            st.shortAvgEntry = newAvg;
+        }
     }
 
     /// @notice Opens a 1x long or short against the LP pool.
@@ -132,6 +168,10 @@ contract SyntheticVault is ERC721, Ownable {
         }
 
         uint256 units = notionalUsd * Wad.ONE / entryPrice;
+
+        _addToSide(feedId, isLong, units, entryPrice);
+        uint256 oi = openInterest(feedId, isLong);
+        if (oi > cfg.maxOiUsd) revert OpenInterestCapExceeded(feedId, isLong, oi, cfg.maxOiUsd);
 
         usdc.safeTransferFrom(msg.sender, address(this), collateral);
         if (openFee != 0) usdc.safeTransfer(address(liquidityVault), openFee);
