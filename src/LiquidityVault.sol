@@ -58,7 +58,14 @@ contract LiquidityVault is ILiquidityVault, ERC4626, Ownable {
         uint256 balance = IERC20(asset()).balanceOf(address(this));
         if (address(vault) == address(0)) return balance;
 
-        int256 owed = vault.totalLiability() / int256(Wad.USDC_SCALE);
+        // Rounded so the pool never benefits: a debt is rounded up, a credit rounded down.
+        // Plain division truncates toward zero, which would shave a fraction off what is owed and
+        // let totalAssets report marginally more than the pool can back.
+        int256 owedWad = vault.totalLiability();
+        int256 owed = owedWad >= 0
+            ? int256(Math.ceilDiv(uint256(owedWad), Wad.USDC_SCALE))
+            : -int256(uint256(-owedWad) / Wad.USDC_SCALE);
+
         int256 nav = int256(balance) - owed;
         return nav > 0 ? uint256(nav) : 0;
     }

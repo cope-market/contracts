@@ -177,4 +177,18 @@ contract LiquidityVaultTest is Test {
         vm.expectRevert(abi.encodeWithSelector(LiquidityVault.ExitFeeTooHigh.selector, 1001, 1000));
         lv.setExitFeeBps(1001);
     }
+
+    /// @dev Sub-micro-USDC liability must round UP, not toward zero. Truncating makes the pool
+    ///      report marginally more assets than it can back, which is the wrong direction: every
+    ///      rounding decision should favour the protocol, never the redeemer.
+    function test_LiabilityRoundsAgainstThePool() public {
+        _deposit(lpA, 100_000e6);
+        _openLong(1_000e6);
+
+        // A price a hair above entry: traders are owed a fraction of one micro-USDC.
+        _price(1e18 + 1);
+
+        assertEq(vault.liability(EUR), int256(1_000), "1000 wei of USD owed");
+        assertEq(lv.totalAssets(), 100_000e6 - 1, "rounded up to a full micro-USDC");
+    }
 }
