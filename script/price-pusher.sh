@@ -74,13 +74,15 @@ cycle() {
   fi
 
   local chain_now
-  chain_now=$(cast block latest --rpc-url "$RPC_URL" --field timestamp)
+  chain_now=$(cast block latest --rpc-url "$RPC_URL" --field timestamp | awk '{print $1}')
 
   # Read what the oracle already holds so feeds with no newer data are dropped. PushOracle requires
   # strictly increasing publish times, so including an unchanged one would revert the whole batch.
   local stored=""
   for id in "${FEEDS[@]}"; do
-    stored+="0x${id}:$(cast call "$ORACLE" 'lastPublishTime(bytes32)(uint64)' "0x${id}" --rpc-url "$RPC_URL") "
+    # awk strips cast's "1789210086 [1.789e9]" annotation, which only appears on large values -
+    # the first run passed because every stored timestamp was still 0.
+    stored+="0x${id}:$(cast call "$ORACLE" 'lastPublishTime(bytes32)(uint64)' "0x${id}" --rpc-url "$RPC_URL" | awk '{print $1}') "
   done
 
   local plan
