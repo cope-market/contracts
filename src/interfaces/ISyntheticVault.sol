@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.28;
+pragma solidity 0.8.37;
 
 /// @notice The trading side of the protocol, as the liquidity vault sees it.
 interface ISyntheticVault {

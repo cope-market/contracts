@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.28;
+pragma solidity 0.8.37;
 
 /// @notice Fixed-point helpers for the boundary between USDC (6 decimals) and internal math (1e18).
 ///
