@@ -27,6 +27,7 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
         uint128 collateral; // USDC, 6 decimals, NET of the open fee
         uint256 units; // 1e18, quantity of the synthetic asset
         uint256 entryPrice; // 1e18, already skewed against the trader
+        address author; // who opened this position; never changes, even if the NFT is sold
         uint256 copiedFromId; // origin tokenId for lineage; 0 if original
         address copyAuthor; // snapshot; receives the author fee
         uint16 authorFeeBps; // snapshot of the rate at copy time
@@ -50,12 +51,16 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
     }
 
     uint256 internal constant BPS = 1e4;
+    uint16 public constant MAX_AUTHOR_FEE_BPS = 5000;
 
     IERC20 public immutable usdc;
     IPriceOracle public immutable oracle;
     ILiquidityVault public immutable liquidityVault;
 
     uint256 public nextTokenId = 1;
+
+    /// @notice Share of a copied position's profit paid to the author of the position it copied.
+    uint16 public authorFeeBps;
 
     mapping(bytes32 feedId => AssetConfig) public assetConfig;
     mapping(uint256 tokenId => Position) private _positions;
@@ -65,6 +70,8 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
     mapping(bytes32 feedId => bool) private _feedKnown;
 
     event AssetConfigured(bytes32 indexed feedId, AssetConfig config);
+    event AuthorFeeSet(uint16 bps);
+    event AuthorFeePaid(uint256 indexed tokenId, address indexed author, uint256 amount);
     event PositionClosed(
         uint256 indexed tokenId,
         address indexed closedBy,
@@ -89,6 +96,7 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
     error ConfidenceTooWide(bytes32 feedId, uint256 confBps, uint256 maxConfBps);
     error PositionTooLarge(bytes32 feedId, uint256 notionalUsd, uint256 maxPositionUsd);
     error ZeroCollateral();
+    error AuthorFeeTooHigh(uint16 requested, uint16 max);
     error NotPositionOwner(uint256 tokenId, address caller);
     error OpenInterestCapExceeded(bytes32 feedId, bool isLong, uint256 oiUsd, uint256 maxOiUsd);
 
@@ -99,6 +107,12 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
         usdc = usdc_;
         oracle = oracle_;
         liquidityVault = liquidityVault_;
+    }
+
+    function setAuthorFeeBps(uint16 bps) external onlyOwner {
+        if (bps > MAX_AUTHOR_FEE_BPS) revert AuthorFeeTooHigh(bps, MAX_AUTHOR_FEE_BPS);
+        authorFeeBps = bps;
+        emit AuthorFeeSet(bps);
     }
 
     function setAssetConfig(bytes32 feedId, AssetConfig calldata config) external onlyOwner {
@@ -191,13 +205,34 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
         uint256 exitPrice = pos.isLong ? p.price - p.conf : p.price + p.conf;
         (uint256 payout, int256 pnlWad) = _quoteClose(pos, cfg.closeFeeBps, exitPrice);
 
+        // The author earns only when the copy earns. No profit, no fee.
+        uint256 authorFee;
+        if (pos.copyAuthor != address(0) && pnlWad > 0) {
+            authorFee = Wad.fromWad(uint256(pnlWad) * pos.authorFeeBps / BPS);
+            if (authorFee > payout) authorFee = payout;
+            payout -= authorFee;
+        }
+
         _removeFromSide(pos.feedId, pos.isLong, pos.units);
         delete _positions[tokenId];
         _burn(tokenId);
 
-        _settle(owner, pos.collateral, payout);
+        _settle(owner, pos.copyAuthor, pos.collateral, payout, authorFee);
 
         emit PositionClosed(tokenId, msg.sender, pos.feedId, exitPrice, pnlWad, payout);
+        if (authorFee != 0) emit AuthorFeePaid(tokenId, pos.copyAuthor, authorFee);
+    }
+
+    /// @dev Attribution is snapshotted at open, from the origin's `author` rather than its current
+    ///      owner. Reading the owner would let someone buy a popular position to capture fees they
+    ///      did not earn; reading it lazily at close would break once the origin is burned.
+    function _resolveCopy(uint256 copiedFromId) internal view returns (address copyAuthor_, uint16 feeBps_) {
+        if (copiedFromId == 0) return (address(0), 0);
+
+        Position storage origin = _positions[copiedFromId];
+        if (origin.entryPrice == 0) revert UnknownPosition(copiedFromId);
+
+        return (origin.author, authorFeeBps);
     }
 
     /// @notice Payout in USDC and signed P&L in wad, for a position exiting at `exitPrice`.
@@ -222,13 +257,17 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
 
     /// @dev Tops up from the LP pool when the trader won, and returns the remainder to it when they
     ///      lost. Close fees arrive at the pool the same way, inside the remainder.
-    function _settle(address owner, uint128 collateral, uint256 payout) internal {
-        if (payout > collateral) {
-            liquidityVault.payout(address(this), payout - collateral);
-        } else if (payout < collateral) {
-            usdc.safeTransfer(address(liquidityVault), collateral - payout);
+    function _settle(address owner, address author, uint128 collateral, uint256 payout, uint256 authorFee)
+        internal
+    {
+        uint256 total = payout + authorFee;
+        if (total > collateral) {
+            liquidityVault.payout(address(this), total - collateral);
+        } else if (total < collateral) {
+            usdc.safeTransfer(address(liquidityVault), collateral - total);
         }
         if (payout != 0) usdc.safeTransfer(owner, payout);
+        if (authorFee != 0) usdc.safeTransfer(author, authorFee);
     }
 
     function _removeFromSide(bytes32 feedId, bool isLong, uint256 units) internal {
@@ -277,6 +316,7 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
         }
 
         uint256 units = notionalUsd * Wad.ONE / entryPrice;
+        (address copyAuthor_, uint16 feeBps_) = _resolveCopy(copiedFromId);
 
         _addToSide(feedId, isLong, units, entryPrice);
         uint256 oi = openInterest(feedId, isLong);
@@ -293,9 +333,10 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
             collateral: net,
             units: units,
             entryPrice: entryPrice,
+            author: msg.sender,
             copiedFromId: copiedFromId,
-            copyAuthor: address(0),
-            authorFeeBps: 0
+            copyAuthor: copyAuthor_,
+            authorFeeBps: feeBps_
         });
         _mint(msg.sender, tokenId);
 
