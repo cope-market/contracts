@@ -35,11 +35,36 @@ ambient reads if blob posting fails.
 So the VAA fails both quorum and expiry. The receiver expects standard Wormhole VAAs while Hermes
 serves Pythnet-signed ones. `hermes-beta` does not help — it rejects the API key outright.
 
-**Consequence:** the real Pyth pull path cannot be exercised on Arc testnet today. Testnet runs on
-`MockOracle`. This is why the vault depends on `IPriceOracle` and never on `IPyth` directly.
+#### Proven, not inferred: the blob is genuine and Arc's deployment is misconfigured
 
-**Recheck on Arc mainnet launch (Sept 16)** — mainnet may be wired correctly. The characterisation
-test fails loudly if testnet is fixed.
+The same Hermes blob, posted in the same minute (`test/PythCrossChain.t.sol`):
+
+| Chain | Pyth contract | Result |
+|---|---|---|
+| Base mainnet | `0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a` | **accepted** |
+| Arc testnet | `0x2880aB155794e7179c9eE2e38200202908C17B43` | **rejected**, `0x2acbe915` |
+
+So the update data is valid and our Hermes API key is fine. The difference is which guardian set each
+chain's Pyth verifies against:
+
+| Chain | Wormhole receiver | Current set | Set 1 size | Set 1 first guardian |
+|---|---|---|---|---|
+| Base | `0x581aaF059CC83A353fc51aDC9a0480FbeDFc6c55` | **1** | **5** | `0x41534bB176E461A3fb30479400f210549eCCE638` (Pythnet) |
+| Arc testnet | `0xb27e5ca259702f209a29225d0eDdC131039C9933` | **7** | **19** | `0x58CC3AE5C097b213cE3c81979e1B9f9570746AA5` (Wormhole devnet) |
+
+Pyth price VAAs are emitted from **Pythnet** (Wormhole chain id 26, emitter
+`PythnetPythnetPythnetPythnetPyth`) and signed by **Pythnet's** 5-guardian set at index 1. Arc's
+receiver was instead seeded with **Wormhole's own** guardian sets — devnet at index 0/1, mainnet by
+index 7. It is holding the wrong public keys, so no Pyth price update can ever verify.
+
+This is a deployment configuration fault in Pyth-on-Arc, not a Pyth protocol bug, not an entitlement
+problem, and not something we can work around from the contract side. See `BUG-ARC-PYTH.md`.
+
+**Consequence:** the real Pyth pull path cannot be exercised on Arc testnet today. Testnet runs on
+`PushOracle`. This is why the vault depends on `IPriceOracle` and never on `IPyth` directly.
+
+**Recheck on Arc mainnet launch (Sept 16)** — mainnet is a separate deployment and may be wired
+correctly. The characterisation test fails loudly if testnet is fixed.
 
 ### The API key has per-feed entitlements
 
