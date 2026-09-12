@@ -356,6 +356,10 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
 
     /// @notice Opens a 1x long or short against the LP pool.
     /// @param updateData Oracle payload, posted before the price is read. Empty for push oracles.
+    ///
+    /// @dev Split into helpers to keep the number of simultaneously live locals inside the EVM's
+    ///      16-slot reach. Written as one function it only compiled under via_ir, which meant
+    ///      `forge coverage` -- which disables via_ir to instrument accurately -- could not build it.
     function open(
         bytes32 feedId,
         bool isLong,
@@ -369,6 +373,39 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
         if (!cfg.enabled) revert AssetDisabled(feedId);
         if (collateral == 0) revert ZeroCollateral();
 
+        uint256 entryPrice = _entryPrice(feedId, cfg, isLong, updateData);
+
+        uint256 openFee = uint256(collateral) * cfg.openFeeBps / BPS;
+        uint128 net = uint128(collateral - openFee);
+
+        uint256 units;
+        {
+            uint256 notionalUsd = Wad.toWad(net);
+            if (notionalUsd > cfg.maxPositionUsd) {
+                revert PositionTooLarge(feedId, notionalUsd, cfg.maxPositionUsd);
+            }
+            units = notionalUsd * Wad.ONE / entryPrice;
+        }
+
+        _addToSide(feedId, isLong, units, entryPrice);
+        {
+            uint256 oi = openInterest(feedId, isLong);
+            if (oi > cfg.maxOiUsd) revert OpenInterestCapExceeded(feedId, isLong, oi, cfg.maxOiUsd);
+        }
+
+        usdc.safeTransferFrom(msg.sender, address(this), collateral);
+        if (openFee != 0) usdc.safeTransfer(address(liquidityVault), openFee);
+
+        tokenId = _mintPosition(feedId, isLong, net, units, entryPrice, copiedFromId);
+    }
+
+    /// @dev Posts the oracle update, validates confidence, and returns the price skewed against the
+    ///      trader. Isolated so the raw oracle struct and the confidence figure do not stay live for
+    ///      the rest of `open`.
+    function _entryPrice(bytes32 feedId, AssetConfig memory cfg, bool isLong, bytes[] calldata updateData)
+        internal
+        returns (uint256)
+    {
         oracle.updatePrices{value: msg.value}(updateData);
         IPriceOracle.Price memory p = oracle.getPrice(feedId, cfg.maxAgeSec);
 
@@ -378,25 +415,19 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
         if (confBps > cfg.maxConfBps) revert ConfidenceTooWide(feedId, confBps, cfg.maxConfBps);
 
         // Confidence always moves the price against the trader.
-        uint256 entryPrice = isLong ? p.price + p.conf : p.price - p.conf;
+        return isLong ? p.price + p.conf : p.price - p.conf;
+    }
 
-        uint256 openFee = uint256(collateral) * cfg.openFeeBps / BPS;
-        uint128 net = uint128(collateral - openFee);
-
-        uint256 notionalUsd = Wad.toWad(net);
-        if (notionalUsd > cfg.maxPositionUsd) {
-            revert PositionTooLarge(feedId, notionalUsd, cfg.maxPositionUsd);
-        }
-
-        uint256 units = notionalUsd * Wad.ONE / entryPrice;
+    /// @dev Resolves copy attribution, writes the position and mints its token.
+    function _mintPosition(
+        bytes32 feedId,
+        bool isLong,
+        uint128 net,
+        uint256 units,
+        uint256 entryPrice,
+        uint256 copiedFromId
+    ) internal returns (uint256 tokenId) {
         (address copyAuthor_, uint16 feeBps_) = _resolveCopy(copiedFromId);
-
-        _addToSide(feedId, isLong, units, entryPrice);
-        uint256 oi = openInterest(feedId, isLong);
-        if (oi > cfg.maxOiUsd) revert OpenInterestCapExceeded(feedId, isLong, oi, cfg.maxOiUsd);
-
-        usdc.safeTransferFrom(msg.sender, address(this), collateral);
-        if (openFee != 0) usdc.safeTransfer(address(liquidityVault), openFee);
 
         tokenId = nextTokenId++;
         _positions[tokenId] = Position({
