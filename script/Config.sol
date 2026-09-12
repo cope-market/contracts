@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.37;
+pragma solidity 0.8.36;
 
 import {SyntheticVault} from "../src/SyntheticVault.sol";
 
@@ -42,11 +42,13 @@ library Config {
 
     /// @dev Caps start small on purpose. They are the difference between a bad day and an insolvent
     ///      pool, and they are trivially raised later by the owner.
+    /// @param feedId Unused today: caps are uniform. Kept so per-asset limits are a local change.
     function configFor(bytes32 feedId, uint32 maxAgeSec)
         internal
         pure
         returns (SyntheticVault.AssetConfig memory)
     {
+        feedId; // unused today; silences the warning without dropping the parameter
         return SyntheticVault.AssetConfig({
             enabled: true,
             maxAgeSec: maxAgeSec,

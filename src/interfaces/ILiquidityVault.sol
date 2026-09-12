@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.37;
+pragma solidity 0.8.36;
 
 /// @notice The LP-capital side of the protocol, as the synthetic vault sees it.
 /// @dev Losses and fees are settled by transferring USDC to the liquidity vault directly - its

@@ -7,6 +7,18 @@ come from Pyth. Positions are ERC-721; LP shares are ERC-4626.
 - **System design:** [cope-market-architecture](https://github.com/cope-market/cope-market-architecture)
 - **Build plan:** [`PLAN.md`](./PLAN.md)
 
+## Deployed on Arc testnet
+
+| Contract | Address |
+|---|---|
+| `SyntheticVault` | [`0xBC9697fdcD58bED8A87E90f0cD6ed0Fc1b104524`](https://testnet.arcscan.app/address/0xBC9697fdcD58bED8A87E90f0cD6ed0Fc1b104524) |
+| `LiquidityVault` | [`0xD28a08692D291e38c970DdAE776D0deFD12538E2`](https://testnet.arcscan.app/address/0xD28a08692D291e38c970DdAE776D0deFD12538E2) |
+| `PushOracle` | [`0x48503a79a8d35E15dF274BDf9fD9272E69DefD87`](https://testnet.arcscan.app/address/0x48503a79a8d35E15dF274BDf9fD9272E69DefD87) |
+
+All three verified on [arcscan](https://testnet.arcscan.app). Chain 5042002; USDC at
+`0x3600000000000000000000000000000000000000` is both collateral and gas. Full details, config and
+smoke-test results in [`DEPLOYMENTS.md`](./DEPLOYMENTS.md).
+
 ## Contracts
 
 | Contract | Standard | Role |
@@ -23,6 +35,9 @@ forge build
 forge test -vvv
 forge fmt
 ```
+
+Solc is pinned to **0.8.36**: arcscan's Blockscout does not carry 0.8.37, and contracts it cannot
+recompile cannot be verified. Check the explorer's supported versions before bumping.
 
 Copy `.env.example` to `.env` before running scripts that need network access.
 

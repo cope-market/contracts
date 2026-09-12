@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.37;
+pragma solidity 0.8.36;
 
 /// @notice The only price surface the vault knows about.
 ///

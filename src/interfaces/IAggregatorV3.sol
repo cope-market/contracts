@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.37;
+pragma solidity 0.8.36;
 
 /// @notice Minimal Chainlink aggregator surface. Declared locally rather than pulling in the whole
 ///         Chainlink package for two functions.
