@@ -1,7 +1,7 @@
 {
-  "name": "@cope-market/keeper",
+  "name": "@cope-market/services",
   "version": "0.1.0",
-  "description": "Liquidates underwater SyntheticVault positions.",
+  "description": "Always-on services for the Arc deployment: the liquidation keeper and the price pusher.",
   "directories": {
     "test": "tests"
   },

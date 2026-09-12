@@ -73,7 +73,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/srv/cope-market/contracts/keeper
+WorkingDirectory=/srv/cope-market/contracts/services
 ExecStart=/usr/bin/npm run keeper -- --send
 Restart=always
 RestartSec=30
