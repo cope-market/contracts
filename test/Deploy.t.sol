@@ -23,6 +23,9 @@ contract DeployTest is Test {
         vm.warp(1_000_000);
         usdc = new MockUSDC();
         deployer = new Deploy();
+        // The script's interim owner is msg.sender, which under `--broadcast` is the EOA making the
+        // calls. Here the Deploy contract itself makes them, so it has to look like the sender.
+        vm.prank(address(deployer));
         d = deployer.deployFor(usdc, owner, "push");
     }
 
@@ -97,7 +100,9 @@ contract DeployTest is Test {
     }
 
     function test_ExplicitMaxAgeOverridesTheDefault() public {
-        Deploy.Deployment memory alt = new Deploy().deployFor(usdc, owner, "push", 1234);
+        Deploy alt_ = new Deploy();
+        vm.prank(address(alt_));
+        Deploy.Deployment memory alt = alt_.deployFor(usdc, owner, "push", 1234);
 
         (, uint32 maxAgeSec,,,,,) = alt.vault.assetConfig(Config.FX_EUR_USD);
         assertEq(maxAgeSec, 1234);

@@ -65,11 +65,15 @@ contract Deploy is Script {
     {
         d.oracle = _deployOracle(oracleKind);
 
-        // Deploy owned by the deployer, configure, then hand over. Constructing straight into the
-        // final owner would leave every onlyOwner setter below unreachable, shipping a vault with
-        // no assets and no caps.
-        d.liquidityVault = new LiquidityVault(usdc, address(this));
-        d.vault = new SyntheticVault(usdc, d.oracle, d.liquidityVault, address(this));
+        // Deploy owned by whoever is making these calls, configure, then hand over. Constructing
+        // straight into the final owner would leave every onlyOwner setter below unreachable,
+        // shipping a vault with no assets and no caps.
+        //
+        // msg.sender, not address(this): under `forge script --broadcast` the contract creations
+        // and the setter calls all originate from the broadcasting EOA, while address(this) is the
+        // ephemeral script contract - which Foundry refuses to let scripts reference at all.
+        d.liquidityVault = new LiquidityVault(usdc, msg.sender);
+        d.vault = new SyntheticVault(usdc, d.oracle, d.liquidityVault, msg.sender);
         d.liquidityVault.setVault(address(d.vault));
 
         // A push-fed deployment needs a staleness bound wider than the pusher's cycle, otherwise
@@ -103,10 +107,10 @@ contract Deploy is Script {
             return new PythOracle(IPyth(vm.envAddress("PYTH")));
         }
         if (k == keccak256("chainlink")) {
-            ChainlinkOracle o = new ChainlinkOracle(address(this));
+            ChainlinkOracle o = new ChainlinkOracle(msg.sender);
             o.setSyntheticConfBps(20); // Chainlink publishes no confidence; stand one in
             return o;
         }
-        return new PushOracle(address(this));
+        return new PushOracle(msg.sender);
     }
 }
