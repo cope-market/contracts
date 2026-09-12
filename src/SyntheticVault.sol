@@ -68,6 +68,10 @@ contract SyntheticVault is ERC721, Ownable {
     );
 
     error UnknownPosition(uint256 tokenId);
+    error AssetDisabled(bytes32 feedId);
+    error ConfidenceTooWide(bytes32 feedId, uint256 confBps, uint256 maxConfBps);
+    error PositionTooLarge(bytes32 feedId, uint256 notionalUsd, uint256 maxPositionUsd);
+    error ZeroCollateral();
 
     constructor(IERC20 usdc_, IPriceOracle oracle_, ILiquidityVault liquidityVault_, address initialOwner)
         ERC721("Cope Market Position", "COPE-POS")
@@ -103,16 +107,31 @@ contract SyntheticVault is ERC721, Ownable {
         bytes[] calldata updateData
     ) external payable returns (uint256 tokenId) {
         AssetConfig memory cfg = assetConfig[feedId];
+        // Checked before touching the oracle so an unconfigured feed reports the real reason
+        // rather than a confusing PriceUnavailable.
+        if (!cfg.enabled) revert AssetDisabled(feedId);
+        if (collateral == 0) revert ZeroCollateral();
 
         oracle.updatePrices{value: msg.value}(updateData);
         IPriceOracle.Price memory p = oracle.getPrice(feedId, cfg.maxAgeSec);
+
+        // A wide confidence interval means the oracle itself is unsure. Trading against it is how
+        // a vault gets picked off during thin or disorderly markets.
+        uint256 confBps = p.conf * BPS / p.price;
+        if (confBps > cfg.maxConfBps) revert ConfidenceTooWide(feedId, confBps, cfg.maxConfBps);
 
         // Confidence always moves the price against the trader.
         uint256 entryPrice = isLong ? p.price + p.conf : p.price - p.conf;
 
         uint256 openFee = uint256(collateral) * cfg.openFeeBps / BPS;
         uint128 net = uint128(collateral - openFee);
-        uint256 units = Wad.toWad(net) * Wad.ONE / entryPrice;
+
+        uint256 notionalUsd = Wad.toWad(net);
+        if (notionalUsd > cfg.maxPositionUsd) {
+            revert PositionTooLarge(feedId, notionalUsd, cfg.maxPositionUsd);
+        }
+
+        uint256 units = notionalUsd * Wad.ONE / entryPrice;
 
         usdc.safeTransferFrom(msg.sender, address(this), collateral);
         if (openFee != 0) usdc.safeTransfer(address(liquidityVault), openFee);
