@@ -32,7 +32,9 @@ contract Deploy is Script {
         IERC20 usdc = IERC20(vm.envAddress("USDC"));
 
         vm.startBroadcast();
-        d = _deploy(usdc, owner, vm.envOr("ORACLE_KIND", string("push")));
+        d = _deploy(
+            usdc, owner, vm.envOr("ORACLE_KIND", string("push")), uint32(vm.envOr("MAX_AGE_SEC", uint256(0)))
+        );
         vm.stopBroadcast();
 
         console.log("oracle         ", address(d.oracle));
@@ -46,10 +48,18 @@ contract Deploy is Script {
         public
         returns (Deployment memory)
     {
-        return _deploy(usdc, owner, oracleKind);
+        return _deploy(usdc, owner, oracleKind, 0);
     }
 
-    function _deploy(IERC20 usdc, address owner, string memory oracleKind)
+    /// @dev Same wiring with an explicit staleness bound, so tests need not go through env vars.
+    function deployFor(IERC20 usdc, address owner, string memory oracleKind, uint32 maxAgeSec)
+        public
+        returns (Deployment memory)
+    {
+        return _deploy(usdc, owner, oracleKind, maxAgeSec);
+    }
+
+    function _deploy(IERC20 usdc, address owner, string memory oracleKind, uint32 maxAgeOverride)
         internal
         returns (Deployment memory d)
     {
@@ -62,9 +72,16 @@ contract Deploy is Script {
         d.vault = new SyntheticVault(usdc, d.oracle, d.liquidityVault, address(this));
         d.liquidityVault.setVault(address(d.vault));
 
+        // A push-fed deployment needs a staleness bound wider than the pusher's cycle, otherwise
+        // trades revert between cycles. MAX_AGE_SEC overrides for either kind.
+        bool pushed = keccak256(bytes(oracleKind)) == keccak256("push");
+
         bytes32[] memory feeds = Config.feeds();
         for (uint256 i; i < feeds.length; ++i) {
-            d.vault.setAssetConfig(feeds[i], Config.configFor(feeds[i]));
+            uint32 maxAgeSec = maxAgeOverride != 0
+                ? maxAgeOverride
+                : (pushed ? Config.PUSHED_MAX_AGE_SEC : Config.defaultMaxAge(feeds[i]));
+            d.vault.setAssetConfig(feeds[i], Config.configFor(feeds[i], maxAgeSec));
         }
 
         d.liquidityVault.setExitFeeBps(10); // 0.10%

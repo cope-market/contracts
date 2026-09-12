@@ -93,4 +93,95 @@ contract PushOracleTest is Test {
         vm.expectRevert(abi.encodeWithSelector(PushOracle.UnexpectedValue.selector, 1 ether));
         oracle.updatePrices{value: 1 ether}(data);
     }
+
+    // --- batching -------------------------------------------------------------------------------
+
+    bytes32 constant FEED_B = keccak256("Metal.XAU/USD");
+    bytes32 constant FEED_C = keccak256("Crypto.BTC/USD");
+
+    function _batch(uint256 n)
+        internal
+        view
+        returns (bytes32[] memory f, uint256[] memory p, uint256[] memory c, uint64[] memory t)
+    {
+        bytes32[3] memory all = [FEED, FEED_B, FEED_C];
+        f = new bytes32[](n);
+        p = new uint256[](n);
+        c = new uint256[](n);
+        t = new uint64[](n);
+        for (uint256 i; i < n; ++i) {
+            f[i] = all[i];
+            p[i] = (i + 1) * 1e18;
+            c[i] = i;
+            t[i] = uint64(block.timestamp);
+        }
+    }
+
+    /// @dev The pusher writes every feed in one transaction. At a feed per transaction the job costs
+    ///      four times the gas and has four times the ways to half-fail.
+    function test_PushManyWritesEveryFeedInOneCall() public {
+        (bytes32[] memory f, uint256[] memory p, uint256[] memory c, uint64[] memory t) = _batch(3);
+        vm.prank(pusher);
+        oracle.pushMany(f, p, c, t);
+
+        assertEq(oracle.getPrice(FEED, 60).price, 1e18);
+        assertEq(oracle.getPrice(FEED_B, 60).price, 2e18);
+        assertEq(oracle.getPrice(FEED_C, 60).price, 3e18);
+    }
+
+    function test_PushManyRevertsOnLengthMismatch() public {
+        (bytes32[] memory f, uint256[] memory p, uint256[] memory c,) = _batch(3);
+        uint64[] memory shortT = new uint64[](2);
+        vm.prank(pusher);
+        vm.expectRevert(abi.encodeWithSelector(PushOracle.LengthMismatch.selector));
+        oracle.pushMany(f, p, c, shortT);
+    }
+
+    /// @dev All-or-nothing. A batch that silently dropped bad entries would let the pusher believe
+    ///      it had updated a feed it had not, and the vault would trade on a stale price.
+    function test_PushManyRevertsEntirelyIfAnyEntryIsInvalid() public {
+        (bytes32[] memory f, uint256[] memory p, uint256[] memory c, uint64[] memory t) = _batch(3);
+        p[1] = 0;
+
+        vm.prank(pusher);
+        vm.expectRevert(abi.encodeWithSelector(IPriceOracle.InvalidPrice.selector, FEED_B));
+        oracle.pushMany(f, p, c, t);
+
+        vm.expectRevert(abi.encodeWithSelector(IPriceOracle.PriceUnavailable.selector, FEED));
+        oracle.getPrice(FEED, 60);
+    }
+
+    function test_PushManyRevertsIfAnyEntryIsNotNewer() public {
+        _push(1.16e18, 0);
+        (bytes32[] memory f, uint256[] memory p, uint256[] memory c, uint64[] memory t) = _batch(3);
+
+        vm.prank(pusher);
+        vm.expectRevert(abi.encodeWithSelector(IPriceOracle.InvalidPrice.selector, FEED));
+        oracle.pushMany(f, p, c, t);
+    }
+
+    function test_PushManyRejectsNonPusher() public {
+        (bytes32[] memory f, uint256[] memory p, uint256[] memory c, uint64[] memory t) = _batch(1);
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSelector(PushOracle.NotPusher.selector, stranger));
+        oracle.pushMany(f, p, c, t);
+    }
+
+    function test_PushManyWithNoEntriesIsHarmless() public {
+        vm.prank(pusher);
+        oracle.pushMany(new bytes32[](0), new uint256[](0), new uint256[](0), new uint64[](0));
+    }
+
+    // --- last publish time ------------------------------------------------------------------------
+
+    /// @dev The pusher reads this to decide which feeds actually have newer data. Hermes keeps
+    ///      returning the same publishTime while a market is closed, and pushing it again reverts.
+    function test_LastPublishTimeIsZeroForAnUnknownFeed() public view {
+        assertEq(oracle.lastPublishTime(FEED_B), 0);
+    }
+
+    function test_LastPublishTimeReportsTheStoredTimestamp() public {
+        _push(1.16e18, 0);
+        assertEq(oracle.lastPublishTime(FEED), uint64(block.timestamp));
+    }
 }

@@ -3,6 +3,7 @@ pragma solidity 0.8.37;
 
 import {Test} from "forge-std/Test.sol";
 import {Deploy} from "../script/Deploy.s.sol";
+import {SetMaxAge} from "../script/SetMaxAge.s.sol";
 import {Config} from "../script/Config.sol";
 import {SyntheticVault} from "../src/SyntheticVault.sol";
 import {PushOracle} from "../src/oracle/PushOracle.sol";
@@ -83,5 +84,67 @@ contract DeployTest is Test {
         d.vault.close(id, new bytes[](0));
 
         assertGt(usdc.balanceOf(trader) - before, 1_000e6, "a winning trade pays out more than it cost");
+    }
+
+    /// @dev A push-fed deployment must tolerate the pusher's cycle time. At the live-oracle bound of
+    ///      60s, every trade between cycles would revert StalePrice.
+    function test_PushDeploymentUsesTheWiderStalenessBound() public view {
+        bytes32[] memory feeds = Config.feeds();
+        for (uint256 i; i < feeds.length; ++i) {
+            (, uint32 maxAgeSec,,,,,) = d.vault.assetConfig(feeds[i]);
+            assertEq(maxAgeSec, Config.PUSHED_MAX_AGE_SEC, "push deployments get the wider bound");
+        }
+    }
+
+    function test_ExplicitMaxAgeOverridesTheDefault() public {
+        Deploy.Deployment memory alt = new Deploy().deployFor(usdc, owner, "push", 1234);
+
+        (, uint32 maxAgeSec,,,,,) = alt.vault.assetConfig(Config.FX_EUR_USD);
+        assertEq(maxAgeSec, 1234);
+    }
+
+    /// @dev The cadence of the price pusher will change, so the bound has to be an ordinary
+    ///      operation rather than a redeploy. Everything else about the asset must survive it.
+    function test_SetMaxAgeRewritesOnlyTheStalenessBound() public {
+        (
+            ,,
+            uint32 confBefore,
+            uint32 openFeeBefore,
+            uint32 closeFeeBefore,
+            uint128 oiBefore,
+            uint128 posBefore
+        ) = d.vault.assetConfig(Config.FX_EUR_USD);
+
+        SetMaxAge ops = new SetMaxAge();
+        vm.prank(owner);
+        d.vault.transferOwnership(address(ops));
+        ops.applyTo(d.vault, 300);
+
+        (
+            bool enabled,
+            uint32 maxAgeAfter,
+            uint32 confAfter,
+            uint32 openFeeAfter,
+            uint32 closeFeeAfter,
+            uint128 oiAfter,
+            uint128 posAfter
+        ) = d.vault.assetConfig(Config.FX_EUR_USD);
+
+        assertEq(maxAgeAfter, 300, "bound updated");
+        assertTrue(enabled, "still enabled");
+        assertEq(confAfter, confBefore, "confidence bound preserved");
+        assertEq(openFeeAfter, openFeeBefore, "open fee preserved");
+        assertEq(closeFeeAfter, closeFeeBefore, "close fee preserved");
+        assertEq(oiAfter, oiBefore, "OI cap preserved");
+        assertEq(posAfter, posBefore, "position cap preserved");
+    }
+
+    function test_SetMaxAgeRejectsZero() public {
+        SetMaxAge ops = new SetMaxAge();
+        vm.prank(owner);
+        d.vault.transferOwnership(address(ops));
+
+        vm.expectRevert("maxAgeSec must be non-zero");
+        ops.applyTo(d.vault, 0);
     }
 }

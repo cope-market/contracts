@@ -25,16 +25,31 @@ library Config {
         ids[3] = EQUITY_TSLA_USD;
     }
 
+    /// @notice Staleness bound a live oracle can sustain: FX and crypto publish near-continuously,
+    ///         metals and equities trade in sessions.
+    /// @dev Only appropriate when prices arrive with every trade, as they do with Pyth's pull model.
+    function defaultMaxAge(bytes32 feedId) internal pure returns (uint32) {
+        bool continuous = feedId == FX_EUR_USD || feedId == CRYPTO_BTC_USD;
+        return continuous ? 60 : 300;
+    }
+
+    /// @notice Staleness bound for a deployment fed by an external price pusher.
+    ///
+    /// @dev The bound has to exceed the pusher's cycle time or trades start reverting between
+    ///      cycles. Ten minutes leaves comfortable headroom for a one-minute cron and tolerates a
+    ///      missed run. Tightened later with `SetMaxAge` once the cadence is proven.
+    uint32 internal constant PUSHED_MAX_AGE_SEC = 600;
+
     /// @dev Caps start small on purpose. They are the difference between a bad day and an insolvent
     ///      pool, and they are trivially raised later by the owner.
-    function configFor(bytes32 feedId) internal pure returns (SyntheticVault.AssetConfig memory) {
-        // Equities and metals move in discrete sessions and go stale out of hours; FX and crypto
-        // update far more continuously.
-        bool continuous = feedId == FX_EUR_USD || feedId == CRYPTO_BTC_USD;
-
+    function configFor(bytes32 feedId, uint32 maxAgeSec)
+        internal
+        pure
+        returns (SyntheticVault.AssetConfig memory)
+    {
         return SyntheticVault.AssetConfig({
             enabled: true,
-            maxAgeSec: continuous ? 60 : 300,
+            maxAgeSec: maxAgeSec,
             maxConfBps: 100, // 1%
             openFeeBps: 10, // 0.10%
             closeFeeBps: 10, // 0.10%

@@ -23,6 +23,7 @@ contract PushOracle is IPriceOracle, Ownable {
 
     error NotPusher(address caller);
     error UnexpectedValue(uint256 value);
+    error LengthMismatch();
 
     constructor(address initialOwner) Ownable(initialOwner) {}
 
@@ -36,6 +37,41 @@ contract PushOracle is IPriceOracle, Ownable {
     ///      to rewind the market, which is a free option against the vault.
     function push(bytes32 feedId, uint256 price, uint256 conf, uint64 publishTime) external {
         if (!isPusher[msg.sender]) revert NotPusher(msg.sender);
+        _push(feedId, price, conf, publishTime);
+    }
+
+    /// @notice Records several prices in one transaction.
+    ///
+    /// @dev The price pusher writes every configured feed each cycle. One call per feed multiplies
+    ///      both the gas and the number of ways a cycle can half-succeed.
+    ///
+    ///      All-or-nothing on purpose: a batch that silently skipped bad entries would leave the
+    ///      pusher believing it had refreshed a feed it had not, and the vault would keep trading
+    ///      against a stale price. Callers filter before submitting, using `lastPublishTime`.
+    function pushMany(
+        bytes32[] calldata feedIds,
+        uint256[] calldata prices,
+        uint256[] calldata confs,
+        uint64[] calldata publishTimes
+    ) external {
+        if (!isPusher[msg.sender]) revert NotPusher(msg.sender);
+
+        uint256 n = feedIds.length;
+        if (prices.length != n || confs.length != n || publishTimes.length != n) revert LengthMismatch();
+
+        for (uint256 i; i < n; ++i) {
+            _push(feedIds[i], prices[i], confs[i], publishTimes[i]);
+        }
+    }
+
+    /// @notice Publish time currently stored for a feed, or zero if it has never been written.
+    /// @dev Lets the pusher skip feeds with no newer data. Hermes keeps returning the same publish
+    ///      time while a market is closed, and re-posting it would revert the whole batch.
+    function lastPublishTime(bytes32 feedId) external view returns (uint64) {
+        return _prices[feedId].publishTime;
+    }
+
+    function _push(bytes32 feedId, uint256 price, uint256 conf, uint64 publishTime) internal {
         if (price == 0) revert InvalidPrice(feedId);
         if (publishTime > block.timestamp) revert InvalidPrice(feedId);
         if (publishTime <= _prices[feedId].publishTime) revert InvalidPrice(feedId);
