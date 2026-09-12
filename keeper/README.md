@@ -103,3 +103,38 @@ gas cost so the trade-off is visible rather than assumed.
 
 It does not open, close, deposit or withdraw. The only transaction it can send is `liquidate`, and
 the only thing that gains it is the reward the contract pays for the call.
+
+## Verified end to end on Arc testnet
+
+`liquidate` had never been called on a live deployment. It has now.
+
+A position was opened for the test rather than an existing one being used, the threshold was
+lowered so it qualified, `--token` kept every other position out of scope, and the threshold was
+restored afterwards. Lowering a parameter rather than pushing a false price means nothing about the
+vault's accounting was falsified to make the test work.
+
+```
+[keeper] threshold 0.01% of collateral lost; reward 1% of collateral
+[keeper] mode      SENDING
+[keeper] scope     position 6 only
+[keeper] position 6: liquidated in 0xda75585254c1..., gas 128535 at 21000000000 wei (0.002699235 USDC)
+```
+
+|                             |                                                                       |
+| --------------------------- | --------------------------------------------------------------------- |
+| `PositionLiquidated` reward | `19980` — exactly 1% of the position's `1998000` collateral           |
+| Payout to the owner         | `1975282`                                                             |
+| Realised                    | `-740036948395095` WAD                                                |
+| `ownerOf(6)` afterwards     | reverts; the NFT is burned                                            |
+| Subgraph                    | same `payout`, `liquidationReward` and P&L, `liquidationsPerformed` 1 |
+
+The subgraph's liquidation handling was written before anything could produce a `PositionLiquidated`
+event. This is the first time it has indexed one.
+
+### Gas is USDC, and it shows up in the token balance
+
+Arc's native currency is USDC at 18 decimals and the ERC-20 at `0x3600…0000` is a 6-decimal view of
+the same balance. They are not two assets. The keeper's ERC-20 balance moved by `1991342` across
+the test where payout plus reward was `1995262`, and the `3920` difference is the gas for the
+liquidation and the two parameter changes. Anything reconciling USDC balances on Arc has to account
+for gas, which is not true on a chain where gas is a different token.

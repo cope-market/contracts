@@ -18,6 +18,9 @@ export interface KeeperConfig {
   /// `maxFeePerGas` floor, in wei. Arc rejects anything under 20 gwei, and a transaction priced
   /// below the floor is not slow — it is refused.
   minMaxFeePerGasWei: bigint;
+  /// When set, only this position is considered. For an operator acting on one position
+  /// deliberately, and for testing a liquidation without putting every other position in scope.
+  onlyToken: bigint | null;
 }
 
 const ARC_TESTNET_CHAIN_ID = 5042002;
@@ -65,7 +68,20 @@ export function loadConfig(
     // did would be a bad way to learn what it does.
     dryRun: !argv.includes("--send"),
     minMaxFeePerGasWei: BigInt(env["ARC_MIN_MAX_FEE_WEI"] ?? ARC_GAS_FLOOR_WEI),
+    onlyToken: parseOnlyToken(argv),
   };
+}
+
+/// `--token 6` restricts the sweep to one position.
+function parseOnlyToken(argv: string[]): bigint | null {
+  const at = argv.indexOf("--token");
+  if (at === -1) return null;
+
+  const value = argv[at + 1];
+  if (value === undefined || !/^\d+$/.test(value)) {
+    throw new Error("--token needs a decimal token id, for example `--token 6`.");
+  }
+  return BigInt(value);
 }
 
 export function runsOnce(argv: string[]): boolean {

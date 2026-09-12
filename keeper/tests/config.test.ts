@@ -93,3 +93,20 @@ describe("the gas floor", () => {
     expect(priced.maxPriorityFeePerGas).toBe(1_000_000_000n);
   });
 });
+
+describe("restricting the sweep to one position", () => {
+  /// The threshold is a global parameter, so lowering it to test a liquidation puts every other
+  /// position in scope at the same time. This is how a test — or an operator — acts on exactly one.
+  it("takes a token id", () => {
+    expect(loadConfig(base, ["--token", "6"]).onlyToken).toBe(6n);
+  });
+
+  it("considers every position when not given one", () => {
+    expect(loadConfig(base, []).onlyToken).toBeNull();
+  });
+
+  it("refuses a token id that is not a number", () => {
+    expect(() => loadConfig(base, ["--token", "six"])).toThrow(/decimal token id/);
+    expect(() => loadConfig(base, ["--token"])).toThrow(/decimal token id/);
+  });
+});

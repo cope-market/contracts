@@ -34,6 +34,9 @@ log.info(`vault     ${config.vault} on chain ${config.chainId}`);
 log.info(`keeper    ${clients.account.address}, ${formatUnits(balance, 18)} USDC for gas`);
 log.info(`threshold ${threshold / 100}% of collateral lost; reward ${reward / 100}% of collateral`);
 log.info(config.dryRun ? "mode      DRY RUN — pass --send to act" : "mode      SENDING");
+if (config.onlyToken !== null) {
+  log.info(`scope     position ${config.onlyToken} only`);
+}
 
 if (balance === 0n && !config.dryRun) {
   // Every simulation would still pass and every send would fail, which reads in the logs as a

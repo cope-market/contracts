@@ -48,6 +48,7 @@ export async function discoverOpen(
   publicClient: PublicClient,
   vault: Address,
   closed: ClosedSet,
+  onlyToken: bigint | null = null,
 ): Promise<bigint[]> {
   const next = await publicClient.readContract({
     address: vault,
@@ -58,6 +59,7 @@ export async function discoverOpen(
   const open: bigint[] = [];
   for (let tokenId = 1n; tokenId < next; tokenId++) {
     if (closed.has(tokenId)) continue;
+    if (onlyToken !== null && tokenId !== onlyToken) continue;
     try {
       await publicClient.readContract({
         address: vault,
@@ -170,7 +172,7 @@ export async function sweep(
   closed: ClosedSet,
   log: Logger,
 ): Promise<SweepResult> {
-  const open = await discoverOpen(clients.publicClient, config.vault, closed);
+  const open = await discoverOpen(clients.publicClient, config.vault, closed, config.onlyToken);
   const result: SweepResult = {
     checked: open.length,
     liquidatable: [],
