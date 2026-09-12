@@ -52,6 +52,7 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
 
     uint256 internal constant BPS = 1e4;
     uint16 public constant MAX_AUTHOR_FEE_BPS = 5000;
+    uint16 public constant MAX_LIQUIDATION_REWARD_BPS = 1000;
 
     IERC20 public immutable usdc;
     IPriceOracle public immutable oracle;
@@ -62,6 +63,12 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
     /// @notice Share of a copied position's profit paid to the author of the position it copied.
     uint16 public authorFeeBps;
 
+    /// @notice Fraction of collateral that must be lost before a position can be liquidated.
+    uint16 public liquidationThresholdBps = 9000;
+
+    /// @notice Fraction of collateral paid to whoever liquidates.
+    uint16 public liquidationRewardBps = 100;
+
     mapping(bytes32 feedId => AssetConfig) public assetConfig;
     mapping(uint256 tokenId => Position) private _positions;
     mapping(bytes32 feedId => AssetState) public assetState;
@@ -71,6 +78,16 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
 
     event AssetConfigured(bytes32 indexed feedId, AssetConfig config);
     event AuthorFeeSet(uint16 bps);
+    event LiquidationParamsSet(uint16 thresholdBps, uint16 rewardBps);
+    event PositionLiquidated(
+        uint256 indexed tokenId,
+        address indexed liquidator,
+        bytes32 indexed feedId,
+        uint256 exitPrice,
+        int256 pnlWad,
+        uint256 payout,
+        uint256 reward
+    );
     event AuthorFeePaid(uint256 indexed tokenId, address indexed author, uint256 amount);
     event PositionClosed(
         uint256 indexed tokenId,
@@ -97,6 +114,8 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
     error PositionTooLarge(bytes32 feedId, uint256 notionalUsd, uint256 maxPositionUsd);
     error ZeroCollateral();
     error AuthorFeeTooHigh(uint16 requested, uint16 max);
+    error PositionHealthy(uint256 tokenId, uint256 lossWad, uint256 thresholdWad);
+    error InvalidLiquidationParams(uint16 thresholdBps, uint16 rewardBps);
     error NotPositionOwner(uint256 tokenId, address caller);
     error OpenInterestCapExceeded(bytes32 feedId, bool isLong, uint256 oiUsd, uint256 maxOiUsd);
 
@@ -107,6 +126,48 @@ contract SyntheticVault is ISyntheticVault, ERC721, Ownable {
         usdc = usdc_;
         oracle = oracle_;
         liquidityVault = liquidityVault_;
+    }
+
+    /// @notice Closes an underwater position on someone else's behalf, paying the caller a reward.
+    ///
+    /// @dev Permissionless on purpose. A long at 1x cannot lose more than its collateral, but a
+    ///      short's loss is unbounded, so without this the pool would absorb the tail. Anyone can
+    ///      call it, so the protocol does not depend on our own keeper staying up.
+    function liquidate(uint256 tokenId, bytes[] calldata updateData) external payable {
+        address owner = _requireOwned(tokenId);
+        Position memory pos = _positions[tokenId];
+        AssetConfig memory cfg = assetConfig[pos.feedId];
+
+        oracle.updatePrices{value: msg.value}(updateData);
+        IPriceOracle.Price memory p = oracle.getPrice(pos.feedId, cfg.maxAgeSec);
+
+        uint256 exitPrice = pos.isLong ? p.price - p.conf : p.price + p.conf;
+        (uint256 payout, int256 pnlWad) = _quoteClose(pos, cfg.closeFeeBps, exitPrice);
+
+        uint256 lossWad = pnlWad < 0 ? uint256(-pnlWad) : 0;
+        uint256 thresholdWad = Wad.toWad(pos.collateral) * liquidationThresholdBps / BPS;
+        if (lossWad < thresholdWad) revert PositionHealthy(tokenId, lossWad, thresholdWad);
+
+        uint256 reward = uint256(pos.collateral) * liquidationRewardBps / BPS;
+        if (reward > payout) reward = payout;
+        payout -= reward;
+
+        _removeFromSide(pos.feedId, pos.isLong, pos.units);
+        delete _positions[tokenId];
+        _burn(tokenId);
+
+        _settle(owner, msg.sender, pos.collateral, payout, reward);
+
+        emit PositionLiquidated(tokenId, msg.sender, pos.feedId, exitPrice, pnlWad, payout, reward);
+    }
+
+    function setLiquidationParams(uint16 thresholdBps, uint16 rewardBps) external onlyOwner {
+        if (thresholdBps > BPS || rewardBps > MAX_LIQUIDATION_REWARD_BPS) {
+            revert InvalidLiquidationParams(thresholdBps, rewardBps);
+        }
+        liquidationThresholdBps = thresholdBps;
+        liquidationRewardBps = rewardBps;
+        emit LiquidationParamsSet(thresholdBps, rewardBps);
     }
 
     function setAuthorFeeBps(uint16 bps) external onlyOwner {
