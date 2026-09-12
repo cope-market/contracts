@@ -118,6 +118,12 @@ contract GenerateQuoteFixturesTest is Test {
         }
 
         out = string.concat(out, "]");
+
+        // `vm.writeFile` does not create parent directories, and `out/parity` is not something
+        // `forge build` produces — it only existed on machines where this test had already run
+        // once. A clean checkout therefore failed here and nowhere else, which is why CI caught it
+        // and no developer did.
+        vm.createDir("out/parity", true);
         vm.writeFile("out/parity/quotes.json", out);
         assertGt(written, 30, "generated a meaningful number of cases");
     }
