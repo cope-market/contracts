@@ -1,0 +1,84 @@
+{
+  "parsed": [
+    {
+      "ema_price": {
+        "conf": "2",
+        "expo": -5,
+        "price": "115952",
+        "publish_time": 1789160399
+      },
+      "id": "a995d00bb36a63cef7fd2c287dc105fc8f3d93779f062f09551b0af3e81ec30b",
+      "metadata": {
+        "prev_publish_time": 1789160398,
+        "proof_available_time": 1789247057,
+        "slot": 35784941140
+      },
+      "price": {
+        "conf": "13",
+        "expo": -5,
+        "price": "115985",
+        "publish_time": 1789160399
+      }
+    },
+    {
+      "ema_price": {
+        "conf": "146",
+        "expo": -3,
+        "price": "4348827",
+        "publish_time": 1789160399
+      },
+      "id": "765d2ba906dbc32ca17cc11f5310a89e9ee1f6420508c63861f2f8ba4ee34bb2",
+      "metadata": {
+        "prev_publish_time": 1789160398,
+        "proof_available_time": 1789247057,
+        "slot": 35784941140
+      },
+      "price": {
+        "conf": "1264",
+        "expo": -3,
+        "price": "4349021",
+        "publish_time": 1789160399
+      }
+    },
+    {
+      "ema_price": {
+        "conf": "1233877059",
+        "expo": -8,
+        "price": "7715872440000",
+        "publish_time": 1789247057
+      },
+      "id": "e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43",
+      "metadata": {
+        "prev_publish_time": 1789247056,
+        "proof_available_time": 1789247057,
+        "slot": 35784941140
+      },
+      "price": {
+        "conf": "1604160840",
+        "expo": -8,
+        "price": "7719114861519",
+        "publish_time": 1789247057
+      }
+    },
+    {
+      "ema_price": {
+        "conf": "1520",
+        "expo": -5,
+        "price": "36495168",
+        "publish_time": 1789171199
+      },
+      "id": "16dad506d7db8da01c87581c87ca897a012a153557d4d578c3b9c9e1bc0632f1",
+      "metadata": {
+        "prev_publish_time": 1789171198,
+        "proof_available_time": 1789247057,
+        "slot": 35784941140
+      },
+      "price": {
+        "conf": "19910",
+        "expo": -5,
+        "price": "36527500",
+        "publish_time": 1789171199
+      }
+    }
+  ]
+}
